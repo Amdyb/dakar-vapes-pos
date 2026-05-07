@@ -5,18 +5,20 @@ const SUPABASE_URL = "https://urkbbwsxgwlsihqmvcna.supabase.co";
 const SUPABASE_KEY = "sb_publishable_FakMrj_v7Q9Ct5noBUpVfw_RCvOnGG9";
 
 const sb = async (path, opts = {}) => {
+  const { prefer, headers: extraHeaders, ...restOpts } = opts;
   const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
     headers: {
       "apikey": SUPABASE_KEY,
       "Authorization": `Bearer ${SUPABASE_KEY}`,
       "Content-Type": "application/json",
-      "Prefer": opts.prefer || "return=representation",
-      ...opts.headers,
+      "Prefer": prefer || "return=representation",
+      ...(extraHeaders || {}),
     },
-    ...opts,
+    ...restOpts,
   });
   if (!res.ok) {
     const err = await res.text();
+    console.error("Supabase error:", err);
     throw new Error(err);
   }
   const text = await res.text();
@@ -29,7 +31,7 @@ const api = {
   createUser: (d) => sb("users", { method: "POST", body: JSON.stringify(d) }),
   updateUser: (id, d) => sb(`users?id=eq.${id}`, { method: "PATCH", body: JSON.stringify(d) }),
   deleteUser: (id) => sb(`users?id=eq.${id}`, { method: "DELETE", prefer: "return=minimal" }),
-  loginUser: (username, password) => sb(`users?username=eq.${encodeURIComponent(username)}&password=eq.${encodeURIComponent(password)}`),
+  loginUser: (username, password) => sb(`users?username=eq.${encodeURIComponent(username)}&password=eq.${encodeURIComponent(password)}&select=*`),
 
   // Categories
   getCategories: () => sb("categories?order=name"),
@@ -525,6 +527,8 @@ const POS = ({ products, setProducts, user, setSales, categories, setPage, setIn
   const [editPriceId, setEditPriceId] = useState(null);
   const [newPrice, setNewPrice] = useState("");
   const [checkoutLoading, setCheckoutLoading] = useState(false);
+  const [customerName, setCustomerName] = useState("");
+  const [customerPhone, setCustomerPhone] = useState("");
   const allCats = ["Tout", ...categories.map(c => c.name)];
   const filtered = products.filter(p =>
     (cat === "Tout" || p.category === cat) &&
@@ -538,7 +542,7 @@ const POS = ({ products, setProducts, user, setSales, categories, setPage, setIn
   const confirmPay = async () => {
     setCheckoutLoading(true);
     try {
-      const saleData = { cashier: user.name, items: cart.map(i => ({ name: i.name, qty: i.qty, price: i.price, image: i.image })), total, payment };
+      const saleData = { cashier: user.name, items: cart.map(i => ({ name: i.name, qty: i.qty, price: i.price, image: i.image })), total, payment, customer_name: customerName, customer_phone: customerPhone };
       const res = await api.createSale(saleData);
       const newSale = res[0];
       // Update stock for each item
@@ -553,6 +557,8 @@ const POS = ({ products, setProducts, user, setSales, categories, setPage, setIn
       setSales(s => [newSale, ...s]);
       setInvoice(newSale);
       setCart([]);
+      setCustomerName("");
+      setCustomerPhone("");
       setPayModal(false);
       setPage("invoice");
       toast("Vente enregistrée ! 🎉");
@@ -562,17 +568,25 @@ const POS = ({ products, setProducts, user, setSales, categories, setPage, setIn
   return (
     <div style={{ padding: "16px 16px 100px" }}>
       <Modal open={payModal} onClose={() => !checkoutLoading && setPayModal(false)} title="Confirmer le paiement">
-        <div style={{ marginBottom: 20 }}>
+        <div style={{ marginBottom: 16 }}>
           {cart.map((i, idx) => (
-            <div key={idx} style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: `1px solid ${G.border}`, fontSize: 14 }}>
-              <span>{i.name} ×{i.qty}</span><span style={{ fontWeight: 700 }}>{fmt(i.price * i.qty)}</span>
+            <div key={idx} style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: `1px solid ${G.border}`, fontSize: 14, alignItems: "center", gap: 8 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <ProductImg image={i.image} size={32} name={i.name} />
+                <span>{i.name} ×{i.qty}</span>
+              </div>
+              <span style={{ fontWeight: 700, flexShrink: 0 }}>{fmt(i.price * i.qty)}</span>
             </div>
           ))}
           <div style={{ display: "flex", justifyContent: "space-between", marginTop: 14, fontSize: 20, fontFamily: "'Bebas Neue',sans-serif", letterSpacing: "0.05em" }}>
             <span>TOTAL</span><span style={{ color: G.green }}>{fmt(total)}</span>
           </div>
         </div>
-        <Select label="Mode de paiement" value={payment} onChange={setPayment} options={["Espèces", "Wave", "Orange Money"]} style={{ marginBottom: 20 }} />
+        <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 16 }}>
+          <Input label="Nom du client (optionnel)" value={customerName} onChange={setCustomerName} placeholder="ex: Moussa Diallo" icon="👤" />
+          <Input label="Téléphone WhatsApp (optionnel)" value={customerPhone} onChange={setCustomerPhone} placeholder="ex: 221781234567" icon="📱" />
+        </div>
+        <Select label="Mode de paiement" value={payment} onChange={setPayment} options={["Espèces", "Wave", "Orange Money"]} style={{ marginBottom: 16 }} />
         <Btn onClick={confirmPay} full loading={checkoutLoading}>✓ Confirmer la vente</Btn>
       </Modal>
       <h1 style={{ fontFamily: "'Bebas Neue',sans-serif", fontWeight: 400, fontSize: 26, letterSpacing: "0.05em", marginBottom: 14 }}>CAISSE</h1>
@@ -700,16 +714,21 @@ const Invoice = ({ invoice, setPage }) => {
         <div style={{ marginBottom: 16, fontSize: 13, color: G.muted, lineHeight: 2.1 }}>
           <div>Date: <span style={{ color: G.text }}>{dateStr}</span></div>
           <div>Vendeur: <span style={{ color: G.text }}>{invoice.cashier}</span></div>
+          {customerName && <div>Client: <span style={{ color: G.text }}>{customerName}</span></div>}
+          {customerPhone && <div>Téléphone: <span style={{ color: G.green }}>{customerPhone}</span></div>}
           <div>Paiement: <span style={{ color: G.text }}>{invoice.payment}</span></div>
         </div>
         <div style={{ borderTop: `1px solid ${G.border}`, borderBottom: `1px solid ${G.border}`, padding: "16px 0", marginBottom: 16 }}>
           {invoice.items.map((i, idx) => (
-            <div key={idx} style={{ display: "flex", justifyContent: "space-between", marginBottom: 10, fontSize: 14 }}>
-              <div>
-                <div style={{ fontWeight: 600 }}>{i.name}</div>
-                <div style={{ color: G.muted, fontSize: 12 }}>{fmt(i.price)} × {i.qty}</div>
+            <div key={idx} style={{ display: "flex", justifyContent: "space-between", marginBottom: 12, fontSize: 14, alignItems: "center", gap: 10 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <ProductImg image={i.image} size={40} name={i.name} />
+                <div>
+                  <div style={{ fontWeight: 600 }}>{i.name}</div>
+                  <div style={{ color: G.muted, fontSize: 12 }}>{fmt(i.price)} × {i.qty}</div>
+                </div>
               </div>
-              <div style={{ fontWeight: 700 }}>{fmt(i.price * i.qty)}</div>
+              <div style={{ fontWeight: 700, flexShrink: 0 }}>{fmt(i.price * i.qty)}</div>
             </div>
           ))}
         </div>
@@ -720,7 +739,18 @@ const Invoice = ({ invoice, setPage }) => {
           Merci pour votre achat chez Dakar Vapes ! 🙏
         </div>
       </Card>
-      <Btn onClick={whatsapp} full style={{ marginTop: 14 }}>🟢 Envoyer par WhatsApp</Btn>
+      <Btn onClick={whatsapp} full style={{ marginTop: 14 }}>
+        🟢 {customerPhone ? `Envoyer à ${customerPhone}` : "Envoyer par WhatsApp"}
+      </Btn>
+      <Btn onClick={() => window.open("https://maps.app.goo.gl/L9z2uFYD5vuFhbWJ9", "_blank")} variant="ghost" full style={{ marginTop: 10 }}>
+        ⭐ Laisser un avis Google
+      </Btn>
+      <div style={{ marginTop: 12, background: G.greenSoft, border: `1px solid ${G.border}`, borderRadius: 14, padding: "14px 16px", textAlign: "center" }}>
+        <p style={{ fontSize: 13, color: G.muted, lineHeight: 1.7 }}>
+          Vous avez aimé votre expérience chez <span style={{ color: G.green, fontWeight: 700 }}>Dakar Vapes</span> ?<br/>
+          Laissez-nous un avis Google — cela nous aide beaucoup ! 🙏⭐
+        </p>
+      </div>
     </div>
   );
 };
